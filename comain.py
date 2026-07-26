@@ -152,7 +152,6 @@ def preparar_audio_mp3(buffer_bytes):
         if not buffer_bytes or not isinstance(buffer_bytes, io.BytesIO):
             BOT_HABLANDO = False
             return
-
         buffer_bytes.seek(0)
         ULTIMO_AUDIO_BYTES = buffer_bytes.read()
     except Exception as e:
@@ -183,7 +182,6 @@ def _hablar_edge_bytes(texto):
     global BOT_HABLANDO
     elementos = voces_por_servicio["edge"]["mujeres"]
     if not elementos:
-        # Respaldo dinámico si la caché está vacía
         voz_nombre = "es-ES-ElviraNeural"
     else:
         item = elementos[INDICE_VOZ_ACTUAL % len(elementos)]
@@ -198,7 +196,6 @@ def _hablar_edge_bytes(texto):
         return bytes(data)
 
     try:
-        # Ejecución asíncrona blindada para Edge-TTS
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -391,7 +388,8 @@ class ServidorSistema(BaseHTTPRequestHandler):
         function reproducirVozHTML() {
             const audioElem = document.getElementById("reproductorAudio");
             const srcActual = "/audio-actual?t=" + new Date().getTime();
-            if (audioElem.src !== srcActual) {
+            if (audioElem.src !== srcActual && ultimoAudioReproducido !== srcActual) {
+                ultimoAudioReproducido = srcActual;
                 audioElem.src = srcActual;
                 audioElem.play().catch(e => console.log("Esperando interacción para audio"));
             }
@@ -457,13 +455,6 @@ class ServidorSistema(BaseHTTPRequestHandler):
         <div style="margin: 10px 0;">
             <a href="/revivir" class="btn-ai">🟢 Revivir / Activar</a>
             <a href="/matar" class="btn-dead">💀 Matar</a>
-        </div>
-
-        <div style="margin-bottom: 12px; background: #0f172a; padding: 8px; border-radius: 8px;">
-            <h3>🎛️ Filtro / Tono de Voz:</h3>
-            <a href="/efecto/normal" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="normal" else "") + """">Normal</a>
-            <a href="/efecto/grave" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="grave" else "") + """">🎙️ Voz Grave</a>
-            <a href="/efecto/chibi" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="chibi" else "") + """">✨ Voz Aguda / Chibi</a>
         </div>
 
         <div>
