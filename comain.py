@@ -172,27 +172,27 @@ def procesar_inteligencia(prompt):
 
     rol_genero = "Eres Cocodrila, alegre y divertida." if GENERO_ACTUAL == "cocodrila" else "Eres Cocodrily, amigable y curioso."
     
-    if GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            data = {
-                "contents": [{
-                    "parts": [{"text": f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)"}]
-                }]
-            }
-            response = requests.post(url, json=data, headers=headers, timeout=10)
-            if response.status_code == 200:
-                res_json = response.json()
-                return res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
-            else:
-                print(f"⚠️ [GEMINI HTTP ERROR]: {response.status_code} - {response.text}")
-                return "¡Hola! Tuve un pequeño problema conectando con mi cerebro."
-        except Exception as e:
-            print(f"⚠️ [GEMINI EXCEPTION]: {e}")
-            return "¡Hola! Me quedé pensando un segundo."
-    else:
-        return "¡Hola! Configura tu API key de Gemini en Render."
+    if not GEMINI_API_KEY:
+        return "Falta configurar la API key de Gemini."
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": [{
+                "parts": [{"text": f"{prompt}\n({rol_genero} Responde de forma directa y natural en español, máximo 2 frases.)"}]
+            }]
+        }
+        response = requests.post(url, json=data, headers=headers, timeout=12)
+        if response.status_code == 200:
+            res_json = response.json()
+            return res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            print(f"⚠️ [GEMINI HTTP ERROR]: {response.status_code} - {response.text}")
+            return f"Error en la API: {response.status_code}"
+    except Exception as e:
+        print(f"⚠️ [GEMINI EXCEPTION]: {e}")
+        return "Error de conexión con el servidor de Gemini."
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -380,6 +380,6 @@ if __name__ == "__main__":
     threading.Thread(target=iniciar_servidor, daemon=True).start()
     while True:
         try:
-            time.sleep(1) # <-- Corregido en minúscula
+            time.sleep(1)
         except KeyboardInterrupt:
             sys.exit(0)
