@@ -12,11 +12,8 @@ import edge_tts
 from gtts import gTTS
 import requests
 
-# --- CONFIGURACIÓN DE OLLAMA Y CLAVES ---
-# Puedes cambiar el modelo aquí fácilmente (ej: "llama3", "mistral", "phi3", "gemma2")
-MODELO_OLLAMA = os.environ.get("OLLAMA_MODEL", "llama3")
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434/api/generate")
-
+# --- CONFIGURACIÓN DE CLAVES ---
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LZ98ckWn8YiZeBcJkKpOeCX-YTsQbjXXfnKdDUpkRpEg")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52")
 PUERTO_SERVIDOR = int(os.environ.get("PORT", 5000))
 
@@ -174,24 +171,28 @@ def procesar_inteligencia(prompt):
         return ""
 
     rol_genero = "Eres Cocodrila, alegre y divertida." if GENERO_ACTUAL == "cocodrila" else "Eres Cocodrily, amigable y curioso."
-    prompt_completo = f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)"
-
-    try:
-        payload = {
-            "model": MODELO_OLLAMA,
-            "prompt": prompt_completo,
-            "stream": False
-        }
-        response = requests.post(OLLAMA_URL, json=payload, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("response", "¡Hola! No supe qué decir.").strip()
-        else:
-            print(f"⚠️ [OLLAMA ERROR]: {response.status_code} - {response.text}")
-            return "¡Vaya, mi servidor local de Ollama tardó en responder!"
-    except Exception as e:
-        print(f"⚠️ [OLLAMA EXCEPTION]: {e}")
-        return "¡Vaya, no pude conectar con Ollama!"
+    
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            data = {
+                "contents": [{
+                    "parts": [{"text": f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)"}]
+                }]
+            }
+            response = requests.post(url, json=data, headers=headers, timeout=10)
+            if response.status_code == 200:
+                res_json = response.json()
+                return res_json["candidates"][0]["content"]["parts"][0]["text"].strip()
+            else:
+                print(f"⚠️ [GEMINI HTTP ERROR]: {response.status_code} - {response.text}")
+                return "¡Hola! Tuve un pequeño problema conectando con mi cerebro."
+        except Exception as e:
+            print(f"⚠️ [GEMINI EXCEPTION]: {e}")
+            return "¡Hola! Me quedé pensando un segundo."
+    else:
+        return "¡Hola! Configura tu API key de Gemini en Render."
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -255,7 +256,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
             self.end_headers()
 
             nombre_activo = obtener_nombre_actual()
-            estado_texto = f"🟢 VIVO Y ACTIVO (OLLAMA: {MODELO_OLLAMA.upper()})" if COCODRILO_VIVO else "💀 MODO MUERTO"
+            estado_texto = "🟢 VIVO Y ACTIVO (GEMINI CLOUD)" if COCODRILO_VIVO else "💀 MODO MUERTO"
             color_estado = "#4ade80" if COCODRILO_VIVO else "#f87171"
 
             voces_motor_actual = voces_por_servicio[MOTOR_ACTUAL]["mujeres"]
