@@ -11,12 +11,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import edge_tts
 from gtts import gTTS
 import requests
-from google import genai
 
-# --- CONFIGURACIÓN DE CLAVES ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LZ98ckWn8YiZeBcJkKpOeCX-YTsQbjXXfnKdDUpkRpEg")
+# --- CONFIGURACIÓN DE OLLAMA Y CLAVES ---
+# Puedes cambiar el modelo aquí fácilmente (ej: "llama3", "mistral", "phi3", "gemma2")
+MODELO_OLLAMA = os.environ.get("OLLAMA_MODEL", "llama3")
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434/api/generate")
+
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52")
-
 PUERTO_SERVIDOR = int(os.environ.get("PORT", 5000))
 
 MOTOR_ACTUAL = "edge"
@@ -24,12 +25,6 @@ INDICE_VOZ_ACTUAL = 0
 COCODRILO_VIVO = True  
 GENERO_ACTUAL = "cocodrily"
 ULTIMO_AUDIO_BASE64 = ""
-
-try:
-    gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-except Exception as e:
-    print(f"⚠️ [GEMINI INIT ERROR]: {e}")
-    gemini_client = None
 
 voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
 try:
@@ -179,19 +174,24 @@ def procesar_inteligencia(prompt):
         return ""
 
     rol_genero = "Eres Cocodrila, alegre y divertida." if GENERO_ACTUAL == "cocodrila" else "Eres Cocodrily, amigable y curioso."
-    
-    if gemini_client:
-        try:
-            response = gemini_client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)",
-            )
-            return response.text
-        except Exception as e:
-            print(f"⚠️ [GEMINI ERROR DETALLADO]: {e}")
-            return "¡Hola! Tuve un pequeño problema conectando con mi cerebro de Gemini."
-    else:
-        return "¡Hola! Falta configurar la API key de Gemini en las variables de entorno."
+    prompt_completo = f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)"
+
+    try:
+        payload = {
+            "model": MODELO_OLLAMA,
+            "prompt": prompt_completo,
+            "stream": False
+        }
+        response = requests.post(OLLAMA_URL, json=payload, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("response", "¡Hola! No supe qué decir.").strip()
+        else:
+            print(f"⚠️ [OLLAMA ERROR]: {response.status_code} - {response.text}")
+            return "¡Vaya, mi servidor local de Ollama tardó en responder!"
+    except Exception as e:
+        print(f"⚠️ [OLLAMA EXCEPTION]: {e}")
+        return "¡Vaya, no pude conectar con Ollama!"
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -255,7 +255,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
             self.end_headers()
 
             nombre_activo = obtener_nombre_actual()
-            estado_texto = "🟢 VIVO Y ACTIVO (GEMINI AI)" if COCODRILO_VIVO else "💀 MODO MUERTO"
+            estado_texto = f"🟢 VIVO Y ACTIVO (OLLAMA: {MODELO_OLLAMA.upper()})" if COCODRILO_VIVO else "💀 MODO MUERTO"
             color_estado = "#4ade80" if COCODRILO_VIVO else "#f87171"
 
             voces_motor_actual = voces_por_servicio[MOTOR_ACTUAL]["mujeres"]
