@@ -27,7 +27,8 @@ ULTIMO_AUDIO_BASE64 = ""
 
 try:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-except Exception:
+except Exception as e:
+    print(f"⚠️ [GEMINI INIT ERROR]: {e}")
     gemini_client = None
 
 voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
@@ -182,14 +183,15 @@ def procesar_inteligencia(prompt):
     if gemini_client:
         try:
             response = gemini_client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
                 contents=f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)",
             )
             return response.text
-        except Exception:
-            return "¡Vaya, me quedé pensando un segundo!"
+        except Exception as e:
+            print(f"⚠️ [GEMINI ERROR DETALLADO]: {e}")
+            return "¡Hola! Tuve un pequeño problema conectando con mi cerebro de Gemini."
     else:
-        return "¡Hola! Configura tu API key de Gemini."
+        return "¡Hola! Falta configurar la API key de Gemini en las variables de entorno."
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -204,7 +206,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
                 self.end_headers()
                 if ULTIMO_AUDIO_BASE64:
                     self.wfile.write(ULTIMO_AUDIO_BASE64.encode("utf-8"))
-                    ULTIMO_AUDIO_BASE64 = "" # Se consume al instante para que nunca se repita
+                    ULTIMO_AUDIO_BASE64 = "" 
                 return
 
             if path.startswith("/hablar/"):
@@ -253,7 +255,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
             self.end_headers()
 
             nombre_activo = obtener_nombre_actual()
-            estado_texto = "🟢 VIVO Y ACTIVO (AUTOMÁTICO)" if COCODRILO_VIVO else "💀 MODO MUERTO"
+            estado_texto = "🟢 VIVO Y ACTIVO (GEMINI AI)" if COCODRILO_VIVO else "💀 MODO MUERTO"
             color_estado = "#4ade80" if COCODRILO_VIVO else "#f87171"
 
             voces_motor_actual = voces_por_servicio[MOTOR_ACTUAL]["mujeres"]
@@ -325,7 +327,6 @@ class ServidorSistema(BaseHTTPRequestHandler):
         }
 
         window.onload = function() { 
-            // Desbloqueo automático de audio al hacer cualquier clic inicial en la página
             document.body.addEventListener('click', () => {
                 if (audioElem.paused && audioElem.src) { audioElem.play().catch(e=>{}); }
             }, { once: true });
