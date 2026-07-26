@@ -1,0 +1,5 @@
+edge-tts
+gtts
+ollama
+requests
+pydub
