@@ -1,5 +1,6 @@
 import asyncio
 import ctypes
+import base64
 import io
 import os
 import sys
@@ -16,26 +17,19 @@ from google import genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LZ98ckWn8YiZeBcJkKpOeCX-YTsQbjXXfnKdDUpkRpEg")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52")
 
-# Puerto dinámico compatible con Render o local (5000)
 PUERTO_SERVIDOR = int(os.environ.get("PORT", 5000))
 
-# Variables globales de estado
 MOTOR_ACTUAL = "edge"
 INDICE_VOZ_ACTUAL = 0
 COCODRILO_VIVO = True  
 GENERO_ACTUAL = "cocodrily"
-EFECTO_VOZ_ACTUAL = "normal"
-BOT_HABLANDO = False
-ULTIMO_AUDIO_BYTES = None
+ULTIMO_AUDIO_BASE64 = ""
 
-# Inicializar cliente de Gemini de forma segura
 try:
     gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-except Exception as e:
-    print(f"⚠️ [GEMINI INIT ERROR]: {e}")
+except Exception:
     gemini_client = None
 
-# 1. Voces SAPI (Local / Sistema)
 voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
 try:
     import win32com.client
@@ -46,7 +40,6 @@ try:
 except Exception:
     pass
 
-# 2. Carga de voces Edge-TTS
 voces_edge_cache = {"mujeres": [], "hombres": []}
 def cargar_todas_voces_edge():
     global voces_edge_cache
@@ -67,13 +60,11 @@ def cargar_todas_voces_edge():
         if not lista_completa:
             lista_completa = [{"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
         voces_edge_cache["mujeres"] = lista_completa
-    except Exception as e:
-        print(f"⚠️ [EDGE WARNING CARGA]: {e}")
+    except Exception:
         voces_edge_cache["mujeres"] = [{"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
 
 cargar_todas_voces_edge()
 
-# 3. Carga de voces ElevenLabs
 voces_elevenlabs_cache = {"mujeres": [], "hombres": []}
 def cargar_todas_voces_elevenlabs():
     global voces_elevenlabs_cache
@@ -85,8 +76,7 @@ def cargar_todas_voces_elevenlabs():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            lista_completa = [{"nombre": v.get("name", "Desconocida"), "id": v.get("voice_id", "")} for v in data.get("voices", [])]
-            voces_elevenlabs_cache["mujeres"] = lista_completa
+            voces_elevenlabs_cache["mujeres"] = [{"nombre": v.get("name", "Desconocida"), "id": v.get("voice_id", "")} for v in data.get("voices", [])]
     except Exception:
         pass
 
@@ -102,18 +92,17 @@ voces_por_servicio = {
 def obtener_nombre_actual():
     return "Cocodrila" if GENERO_ACTUAL == "cocodrila" else "Cocodrily"
 
-def preparar_audio_mp3(buffer_bytes):
-    global ULTIMO_AUDIO_BYTES, BOT_HABLANDO
+def preparar_audio_base64(buffer_bytes):
+    global ULTIMO_AUDIO_BASE64
     try:
         if not buffer_bytes or not isinstance(buffer_bytes, io.BytesIO):
-            BOT_HABLANDO = False
             return
         buffer_bytes.seek(0)
-        ULTIMO_AUDIO_BYTES = buffer_bytes.read()
+        audio_bytes = buffer_bytes.read()
+        if len(audio_bytes) > 50:
+            ULTIMO_AUDIO_BASE64 = base64.b64encode(audio_bytes).decode("utf-8")
     except Exception as e:
-        print(f"⚠️ [AUDIO MP3 ERROR]: {e}")
-    finally:
-        BOT_HABLANDO = False
+        print(f"⚠️ [AUDIO ERROR]: {e}")
 
 def _hablar_elevenlabs_bytes(texto):
     todos = voces_por_servicio["elevenlabs"]["mujeres"]
@@ -127,15 +116,11 @@ def _hablar_elevenlabs_bytes(texto):
     try:
         response = requests.post(url, json=data, headers=headers, timeout=15)
         if response.status_code == 200:
-            preparar_audio_mp3(io.BytesIO(response.content))
-        else:
-            global BOT_HABLANDO
-            BOT_HABLANDO = False
+            preparar_audio_base64(io.BytesIO(response.content))
     except Exception:
-        BOT_HABLANDO = False
+        pass
 
 def _hablar_edge_bytes(texto):
-    global BOT_HABLANDO
     elementos = voces_por_servicio["edge"]["mujeres"]
     voz_nombre = elementos[INDICE_VOZ_ACTUAL % len(elementos)]["nombre"] if elementos else "es-ES-ElviraNeural"
 
@@ -157,18 +142,12 @@ def _hablar_edge_bytes(texto):
             ab = asyncio.run(_gen())
 
         if ab and len(ab) > 100:
-            preparar_audio_mp3(io.BytesIO(ab))
-        else:
-            BOT_HABLANDO = False
+            preparar_audio_base64(io.BytesIO(ab))
     except Exception as e:
         print(f"⚠️ [EDGE TTS ERROR]: {e}")
-        BOT_HABLANDO = False
 
 def generar_audio_web(texto):
-    global BOT_HABLANDO
-    BOT_HABLANDO = True
     if not texto or not texto.strip():
-        BOT_HABLANDO = False
         return
     try:
         if MOTOR_ACTUAL == "elevenlabs":
@@ -180,11 +159,11 @@ def generar_audio_web(texto):
             tts = gTTS(text=texto, lang="es", slow=False)
             tts.write_to_fp(buffer_ram)
             buffer_ram.seek(0)
-            preparar_audio_mp3(buffer_ram)
+            preparar_audio_base64(buffer_ram)
         else:
             _hablar_edge_bytes(texto)
     except Exception:
-        BOT_HABLANDO = False
+        pass
 
 def procesar_inteligencia(prompt):
     global COCODRILO_VIVO
@@ -207,29 +186,25 @@ def procesar_inteligencia(prompt):
                 contents=f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)",
             )
             return response.text
-        except Exception as e:
-            print(f"⚠️ [GEMINI ERROR]: {e}")
+        except Exception:
             return "¡Vaya, me quedé pensando un segundo!"
     else:
-        return "¡Hola! Configura tu API key de Gemini para charlar conmigo."
+        return "¡Hola! Configura tu API key de Gemini."
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
-        global MOTOR_ACTUAL, INDICE_VOZ_ACTUAL, EFECTO_VOZ_ACTUAL, COCODRILO_VIVO, ULTIMO_AUDIO_BYTES
+        global MOTOR_ACTUAL, INDICE_VOZ_ACTUAL, COCODRILO_VIVO, ULTIMO_AUDIO_BASE64
         try:
             parsed_path = urllib.parse.urlparse(self.path)
             path = parsed_path.path
 
-            if path == "/audio-actual":
+            if path == "/audio-nuevo":
                 self.send_response(200)
-                self.send_header("Content-type", "audio/mpeg")
-                if ULTIMO_AUDIO_BYTES:
-                    self.send_header("Content-Length", str(len(ULTIMO_AUDIO_BYTES)))
-                    self.end_headers()
-                    self.wfile.write(ULTIMO_AUDIO_BYTES)
-                    ULTIMO_AUDIO_BYTES = None
-                else:
-                    self.end_headers()
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                if ULTIMO_AUDIO_BASE64:
+                    self.wfile.write(ULTIMO_AUDIO_BASE64.encode("utf-8"))
+                    ULTIMO_AUDIO_BASE64 = "" # Se consume al instante para que nunca se repita
                 return
 
             if path.startswith("/hablar/"):
@@ -278,7 +253,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
             self.end_headers()
 
             nombre_activo = obtener_nombre_actual()
-            estado_texto = "🟢 VIVO Y ACTIVO (GEMINI AI)" if COCODRILO_VIVO else "💀 MODO MUERTO"
+            estado_texto = "🟢 VIVO Y ACTIVO (AUTOMÁTICO)" if COCODRILO_VIVO else "💀 MODO MUERTO"
             color_estado = "#4ade80" if COCODRILO_VIVO else "#f87171"
 
             voces_motor_actual = voces_por_servicio[MOTOR_ACTUAL]["mujeres"]
@@ -309,25 +284,16 @@ class ServidorSistema(BaseHTTPRequestHandler):
     </style>
     <script>
         let recognition = null;
-        let ultimoAudioReproducido = "";
-
-        function reproducirVozHTML() {
-            const audioElem = document.getElementById("reproductorAudio");
-            const srcActual = "/audio-actual?t=" + new Date().getTime();
-            if (audioElem.src !== srcActual && ultimoAudioReproducido !== srcActual) {
-                ultimoAudioReproducido = srcActual;
-                audioElem.src = srcActual;
-                audioElem.play().catch(e => console.log("Esperando interacción para audio"));
-            }
-        }
+        const audioElem = new Audio();
 
         setInterval(async () => {
             try {
-                let res = await fetch("/audio-actual");
+                let res = await fetch("/audio-nuevo");
                 if (res.ok) {
-                    let blob = await res.blob();
-                    if (blob.size > 100) {
-                        reproducirVozHTML();
+                    let b64 = await res.text();
+                    if (b64.length > 50) {
+                        audioElem.src = "data:audio/mp3;base64," + b64;
+                        audioElem.play().catch(e => console.log("Audio esperando toque en pantalla"));
                     }
                 }
             } catch(e) {}
@@ -335,10 +301,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
 
         function iniciarEscuchaContinua() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SpeechRecognition) {
-                document.getElementById("estadoMic").innerText = "⚠️ Navegador sin soporte de micrófono.";
-                return;
-            }
+            if (!SpeechRecognition) return;
             recognition = new SpeechRecognition();
             recognition.lang = 'es-ES';
             recognition.continuous = true;
@@ -361,19 +324,19 @@ class ServidorSistema(BaseHTTPRequestHandler):
             try { recognition.start(); } catch(e) {}
         }
 
-        window.onload = function() { iniciarEscuchaContinua(); };
+        window.onload = function() { 
+            // Desbloqueo automático de audio al hacer cualquier clic inicial en la página
+            document.body.addEventListener('click', () => {
+                if (audioElem.paused && audioElem.src) { audioElem.play().catch(e=>{}); }
+            }, { once: true });
+            iniciarEscuchaContinua(); 
+        };
     </script>
 </head>
 <body>
     <div class="container">
         <h1>🐊 PANEL WEB: """ + nombre_activo.upper() + """</h1>
         <p>Estado: <strong style="color: """ + color_estado + """;">""" + estado_texto + """</strong></p>
-
-        <!-- Reproductor de audio visible para desbloquear el navegador -->
-        <div style="margin: 15px 0; background: #111; padding: 10px; border-radius: 8px; border: 1px solid #0ff;">
-            <h3>🔊 Reproductor de Voz:</h3>
-            <audio id="reproductorAudio" controls autoplay style="width: 100%;"></audio>
-        </div>
 
         <div style="margin: 10px 0;">
             <a href="/revivir" class="btn-ai">🟢 Revivir / Activar</a>
