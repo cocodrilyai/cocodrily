@@ -369,7 +369,11 @@ class ServidorSistema(BaseHTTPRequestHandler):
         <h1>🐊 PANEL WEB: """ + nombre_activo.upper() + """</h1>
         <p>Estado: <strong style="color: """ + color_estado + """;">""" + estado_texto + """</strong></p>
 
-        <audio id="reproductorAudio" autoplay></audio>
+        <!-- Reproductor de audio visible para desbloquear el navegador -->
+        <div style="margin: 15px 0; background: #111; padding: 10px; border-radius: 8px; border: 1px solid #0ff;">
+            <h3>🔊 Reproductor de Voz:</h3>
+            <audio id="reproductorAudio" controls autoplay style="width: 100%;"></audio>
+        </div>
 
         <div style="margin: 10px 0;">
             <a href="/revivir" class="btn-ai">🟢 Revivir / Activar</a>
