@@ -1,5 +1,8 @@
 edge-tts
 gtts
 ollama
+pygame
 requests
 pydub
+audioop-lts
+pyaudioop
