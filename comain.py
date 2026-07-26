@@ -7,14 +7,14 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
 import edge_tts
 from gtts import gTTS
-import ollama
 import requests
+from google import genai
 
 # --- CONFIGURACIÓN DE CLAVES ---
-ELEVENLABS_API_KEY = "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LZ98ckWn8YiZeBcJkKpOeCX-YTsQbjXXfnKdDUpkRpEg")
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52")
 
 # Puerto dinámico compatible con Render o local (5000)
 PUERTO_SERVIDOR = int(os.environ.get("PORT", 5000))
@@ -25,35 +25,34 @@ INDICE_VOZ_ACTUAL = 0
 COCODRILO_VIVO = True  
 GENERO_ACTUAL = "cocodrily"
 EFECTO_VOZ_ACTUAL = "normal"
-
-# 🔒 Bandera para bloquear el micrófono mientras habla
 BOT_HABLANDO = False
-
-# Último buffer de audio generado listo para enviarse al HTML
 ULTIMO_AUDIO_BYTES = None
 
-# 1. Escaneo completo de TODAS las voces SAPI5 (Windows Local)
-voces_sapi_instaladas = []
+# Inicializar cliente de Gemini de forma segura
+try:
+    gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+except Exception as e:
+    print(f"⚠️ [GEMINI INIT ERROR]: {e}")
+    gemini_client = None
+
+# 1. Voces SAPI (Local / Sistema)
+voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
 try:
     import win32com.client
     ctypes.windll.ole32.CoInitialize(None)
     speaker = win32com.client.Dispatch("SAPI.SpVoice")
-    for voice in speaker.GetVoices():
-        voces_sapi_instaladas.append(voice.GetDescription())
+    voces_sapi_instaladas = [voice.GetDescription() for voice in speaker.GetVoices()]
     ctypes.windll.ole32.CoUninitialize()
 except Exception:
-    voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
+    pass
 
-# 2. Carga completa de TODAS las voces en español de Edge-TTS (Corregida de forma segura)
+# 2. Carga de voces Edge-TTS
 voces_edge_cache = {"mujeres": [], "hombres": []}
-
 def cargar_todas_voces_edge():
     global voces_edge_cache
     try:
         async def _obtener():
             return await edge_tts.list_voices()
-        
-        # Manejo seguro del bucle de eventos para evitar bloqueos
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -64,27 +63,18 @@ def cargar_todas_voces_edge():
             todas = asyncio.run(_obtener())
 
         voces_es = [v for v in todas if v.get("Locale", "").startswith("es-")]
-        
-        lista_completa = []
-        for v in voces_es:
-            item = {"nombre": v["ShortName"], "rate": "+0%", "pitch": "+0Hz"}
-            lista_completa.append(item)
-            
+        lista_completa = [{"nombre": v["ShortName"], "rate": "+0%", "pitch": "+0Hz"} for v in voces_es]
         if not lista_completa:
-            # Respaldo por si la API tarda en responder al iniciar
-            lista_completa = [{"nombre": "es-ES-AlvaroNeural", "rate": "+0%", "pitch": "+0Hz"}, {"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
-
+            lista_completa = [{"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
         voces_edge_cache["mujeres"] = lista_completa
-        voces_edge_cache["hombres"] = []
     except Exception as e:
         print(f"⚠️ [EDGE WARNING CARGA]: {e}")
         voces_edge_cache["mujeres"] = [{"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
 
 cargar_todas_voces_edge()
 
-# 3. Carga completa de TODAS las voces de ElevenLabs desde la API
+# 3. Carga de voces ElevenLabs
 voces_elevenlabs_cache = {"mujeres": [], "hombres": []}
-
 def cargar_todas_voces_elevenlabs():
     global voces_elevenlabs_cache
     if not ELEVENLABS_API_KEY or ELEVENLABS_API_KEY.startswith("sk_..."):
@@ -95,12 +85,7 @@ def cargar_todas_voces_elevenlabs():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            lista_voces = data.get("voices", [])
-            lista_completa = []
-            for v in lista_voces:
-                nombre = v.get("name", "Desconocida")
-                voice_id = v.get("voice_id", "")
-                lista_completa.append({"nombre": nombre, "id": voice_id})
+            lista_completa = [{"nombre": v.get("name", "Desconocida"), "id": v.get("voice_id", "")} for v in data.get("voices", [])]
             voces_elevenlabs_cache["mujeres"] = lista_completa
     except Exception:
         pass
@@ -110,41 +95,12 @@ cargar_todas_voces_elevenlabs()
 voces_por_servicio = {
     "edge": voces_edge_cache,
     "elevenlabs": voces_elevenlabs_cache,
-    "local": {
-        "mujeres": voces_sapi_instaladas,
-        "hombres": []
-    },
-    "gtts": {
-        "mujeres": [
-            "es-ES (España)", "es-MX (México)", "es-US (Estados Unidos)", 
-            "es-AR (Argentina)", "es-CO (Colombia)", "es-CL (Chile)", 
-            "es-PE (Perú)", "es-VE (Venezuela)"
-        ],
-        "hombres": []
-    }
+    "local": {"mujeres": voces_sapi_instaladas, "hombres": []},
+    "gtts": {"mujeres": ["es-ES (España)", "es-MX (México)", "es-US (Estados Unidos)", "es-AR (Argentina)"], "hombres": []}
 }
-
-modo_actual = 0
-FRASES_REALISTAS = [
-    "Hmm, déjame pensar un segundo en eso.",
-    "¡Vaya, eso sí que no me lo esperaba!",
-    "La verdad es que tienes toda la razón.",
-    "¿De verdad? Cuéntame más sobre eso, me interesa.",
-    "Estoy un poco ocupado ahora mismo mirando por la ventana, pero te escucho.",
-    "¡Jaja, qué ocurrencia la tuya!",
-    "Bueno, las cosas como son, hay que admitirlo.",
-    "Eso suena genial, ¿cuándo lo hacemos?",
-    "A veces me pongo a pensar en mis cosas y se me va el santo al cielo.",
-    "¡Claro que sí! Cuenta conmigo para lo que sea."
-]
-contador_frase = 0
 
 def obtener_nombre_actual():
     return "Cocodrila" if GENERO_ACTUAL == "cocodrila" else "Cocodrily"
-
-def actualizar_genero_segun_voz():
-    global GENERO_ACTUAL
-    GENERO_ACTUAL = "cocodrily"
 
 def preparar_audio_mp3(buffer_bytes):
     global ULTIMO_AUDIO_BYTES, BOT_HABLANDO
@@ -181,11 +137,7 @@ def _hablar_elevenlabs_bytes(texto):
 def _hablar_edge_bytes(texto):
     global BOT_HABLANDO
     elementos = voces_por_servicio["edge"]["mujeres"]
-    if not elementos:
-        voz_nombre = "es-ES-ElviraNeural"
-    else:
-        item = elementos[INDICE_VOZ_ACTUAL % len(elementos)]
-        voz_nombre = item["nombre"]
+    voz_nombre = elementos[INDICE_VOZ_ACTUAL % len(elementos)]["nombre"] if elementos else "es-ES-ElviraNeural"
 
     async def _gen():
         comm = edge_tts.Communicate(texto, voz_nombre)
@@ -218,7 +170,6 @@ def generar_audio_web(texto):
     if not texto or not texto.strip():
         BOT_HABLANDO = False
         return
-
     try:
         if MOTOR_ACTUAL == "elevenlabs":
             _hablar_elevenlabs_bytes(texto)
@@ -236,41 +187,35 @@ def generar_audio_web(texto):
         BOT_HABLANDO = False
 
 def procesar_inteligencia(prompt):
-    global modo_actual, contador_frase, COCODRILO_VIVO
+    global COCODRILO_VIVO
     texto_lower = prompt.lower()
 
     if "muérete" in texto_lower or "muere" in texto_lower:
         COCODRILO_VIVO = False
         return "..."
-
     if "pedo" in texto_lower or "gas" in texto_lower:
         return "¡Prrrt! Ups, ¡fue el cocodrilo!"
-
     if not COCODRILO_VIVO:
         return ""
 
     rol_genero = "Eres Cocodrila, alegre y divertida." if GENERO_ACTUAL == "cocodrila" else "Eres Cocodrily, amigable y curioso."
     
-    if modo_actual in [0, 1]:
-        modelo_nom = "qwen2:1.5b" if modo_actual == 0 else "llama3.1"
+    if gemini_client:
         try:
-            client = ollama.Client()
-            res = client.chat(
-                model=modelo_nom, 
-                messages=[{"role": "user", "content": f"{prompt}\n({rol_genero} Responde súper corto y directo en español.)"}], 
-                options={"num_predict": 30, "temperature": 0.7}
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=f"{prompt}\n({rol_genero} Responde súper corto, amigable y directo en español, máximo 2 frases.)",
             )
-            return res["message"]["content"]
-        except Exception:
-            return FRASES_REALISTAS[0]
+            return response.text
+        except Exception as e:
+            print(f"⚠️ [GEMINI ERROR]: {e}")
+            return "¡Vaya, me quedé pensando un segundo!"
     else:
-        res = FRASES_REALISTAS[contador_frase % len(FRASES_REALISTAS)]
-        contador_frase += 1
-        return res
+        return "¡Hola! Configura tu API key de Gemini para charlar conmigo."
 
 class ServidorSistema(BaseHTTPRequestHandler):
     def do_GET(self):
-        global modo_actual, MOTOR_ACTUAL, INDICE_VOZ_ACTUAL, EFECTO_VOZ_ACTUAL, COCODRILO_VIVO, ULTIMO_AUDIO_BYTES
+        global MOTOR_ACTUAL, INDICE_VOZ_ACTUAL, EFECTO_VOZ_ACTUAL, COCODRILO_VIVO, ULTIMO_AUDIO_BYTES
         try:
             parsed_path = urllib.parse.urlparse(self.path)
             path = parsed_path.path
@@ -282,6 +227,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
                     self.send_header("Content-Length", str(len(ULTIMO_AUDIO_BYTES)))
                     self.end_headers()
                     self.wfile.write(ULTIMO_AUDIO_BYTES)
+                    ULTIMO_AUDIO_BYTES = None
                 else:
                     self.end_headers()
                 return
@@ -309,27 +255,9 @@ class ServidorSistema(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
 
-            elif path.startswith("/efecto/"):
-                EFECTO_VOZ_ACTUAL = path.split("/")[-1]
-                self.send_response(303)
-                self.send_header("Location", "/")
-                self.end_headers()
-                return
-
             elif path.startswith("/motor/"):
                 MOTOR_ACTUAL = path.split("/")[-1]
                 INDICE_VOZ_ACTUAL = 0
-                actualizar_genero_segun_voz()
-                self.send_response(303)
-                self.send_header("Location", "/")
-                self.end_headers()
-                return
-
-            elif path.startswith("/modo/"):
-                try:
-                    modo_actual = int(path.split("/")[-1])
-                except Exception:
-                    pass
                 self.send_response(303)
                 self.send_header("Location", "/")
                 self.end_headers()
@@ -338,7 +266,6 @@ class ServidorSistema(BaseHTTPRequestHandler):
             elif path.startswith("/voz/"):
                 try:
                     INDICE_VOZ_ACTUAL = int(path.split("/")[-1])
-                    actualizar_genero_segun_voz()
                 except Exception:
                     pass
                 self.send_response(303)
@@ -351,7 +278,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
             self.end_headers()
 
             nombre_activo = obtener_nombre_actual()
-            estado_texto = "🟢 VIVO Y ACTIVO" if COCODRILO_VIVO else "💀 MODO MUERTO"
+            estado_texto = "🟢 VIVO Y ACTIVO (GEMINI AI)" if COCODRILO_VIVO else "💀 MODO MUERTO"
             color_estado = "#4ade80" if COCODRILO_VIVO else "#f87171"
 
             voces_motor_actual = voces_por_servicio[MOTOR_ACTUAL]["mujeres"]
@@ -374,7 +301,6 @@ class ServidorSistema(BaseHTTPRequestHandler):
         .container { max-width: 900px; margin: auto; background: #050505; padding: 18px; border-radius: 12px; border: 2px solid #00f2fe; }
         .btn { display: inline-block; margin: 2px; padding: 5px 8px; font-size: 10px; text-decoration: none; color: white; background: #334155; border-radius: 3px; }
         .btn-engine { background: #7c3aed; font-size: 10px; margin: 3px; padding: 7px 10px; text-decoration: none; color: white; border-radius: 4px; display: inline-block; font-weight: bold; }
-        .btn-fx { background: #0284c7; font-size: 10px; margin: 2px; padding: 6px 10px; text-decoration: none; color: white; border-radius: 4px; display: inline-block; }
         .btn-ai { background: #2563eb; margin: 3px; padding: 8px 14px; text-decoration: none; color: white; border-radius: 4px; display: inline-block; font-weight: bold; }
         .btn-dead { background: #dc2626; margin: 3px; padding: 8px 14px; text-decoration: none; color: white; border-radius: 4px; display: inline-block; font-weight: bold; }
         .btn-activo { background: #16a34a !important; font-weight: bold; border: 1px solid #86efac; }
@@ -429,12 +355,6 @@ class ServidorSistema(BaseHTTPRequestHandler):
                     fetch("/hablar/" + encodeURIComponent(speechResult));
                 }
             };
-            recognition.onerror = function(event) {
-                if (event.error === 'not-allowed') {
-                    document.getElementById("estadoMic").innerText = "🔴 Micrófono Bloqueado (Permisos)";
-                    document.getElementById("estadoMic").style.background = "#dc2626";
-                }
-            };
             recognition.onend = function() { 
                 setTimeout(() => { try { recognition.start(); } catch(e) {} }, 500); 
             };
@@ -449,19 +369,11 @@ class ServidorSistema(BaseHTTPRequestHandler):
         <h1>🐊 PANEL WEB: """ + nombre_activo.upper() + """</h1>
         <p>Estado: <strong style="color: """ + color_estado + """;">""" + estado_texto + """</strong></p>
 
-        <!-- Elemento de audio HTML oculto para que hable el celular -->
         <audio id="reproductorAudio" autoplay></audio>
 
         <div style="margin: 10px 0;">
             <a href="/revivir" class="btn-ai">🟢 Revivir / Activar</a>
             <a href="/matar" class="btn-dead">💀 Matar</a>
-        </div>
-
-        <div>
-            <h3>Modo de Respuesta:</h3>
-            <a href="/modo/0" class="btn-ai """ + ("btn-activo" if modo_actual == 0 else "") + """">⚡ Qwen 2 (1.5B)</a>
-            <a href="/modo/1" class="btn-ai """ + ("btn-activo" if modo_actual == 1 else "") + """">🧠 Llama 3.1</a>
-            <a href="/modo/2" class="btn-ai """ + ("btn-activo" if modo_actual == 2 else "") + """">💬 Modo Realista</a>
         </div>
 
         <div style="margin-top: 12px;">
@@ -496,7 +408,6 @@ def iniciar_servidor():
     server.serve_forever()
 
 if __name__ == "__main__":
-    actualizar_genero_segun_voz()
     threading.Thread(target=iniciar_servidor, daemon=True).start()
     while True:
         try:
