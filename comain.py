@@ -44,7 +44,7 @@ try:
 except Exception:
     voces_sapi_instaladas = ["Microsoft Helena", "Microsoft Pablo"]
 
-# 2. Carga completa de TODAS las voces en español de Edge-TTS
+# 2. Carga completa de TODAS las voces en español de Edge-TTS (Corregida de forma segura)
 voces_edge_cache = {"mujeres": [], "hombres": []}
 
 def cargar_todas_voces_edge():
@@ -53,6 +53,7 @@ def cargar_todas_voces_edge():
         async def _obtener():
             return await edge_tts.list_voices()
         
+        # Manejo seguro del bucle de eventos para evitar bloqueos
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -70,6 +71,7 @@ def cargar_todas_voces_edge():
             lista_completa.append(item)
             
         if not lista_completa:
+            # Respaldo por si la API tarda en responder al iniciar
             lista_completa = [{"nombre": "es-ES-AlvaroNeural", "rate": "+0%", "pitch": "+0Hz"}, {"nombre": "es-ES-ElviraNeural", "rate": "+0%", "pitch": "+0Hz"}]
 
         voces_edge_cache["mujeres"] = lista_completa
@@ -150,6 +152,7 @@ def preparar_audio_mp3(buffer_bytes):
         if not buffer_bytes or not isinstance(buffer_bytes, io.BytesIO):
             BOT_HABLANDO = False
             return
+
         buffer_bytes.seek(0)
         ULTIMO_AUDIO_BYTES = buffer_bytes.read()
     except Exception as e:
@@ -180,6 +183,7 @@ def _hablar_edge_bytes(texto):
     global BOT_HABLANDO
     elementos = voces_por_servicio["edge"]["mujeres"]
     if not elementos:
+        # Respaldo dinámico si la caché está vacía
         voz_nombre = "es-ES-ElviraNeural"
     else:
         item = elementos[INDICE_VOZ_ACTUAL % len(elementos)]
@@ -194,6 +198,7 @@ def _hablar_edge_bytes(texto):
         return bytes(data)
 
     try:
+        # Ejecución asíncrona blindada para Edge-TTS
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -381,6 +386,7 @@ class ServidorSistema(BaseHTTPRequestHandler):
     </style>
     <script>
         let recognition = null;
+        let ultimoAudioReproducido = "";
 
         function reproducirVozHTML() {
             const audioElem = document.getElementById("reproductorAudio");
@@ -445,11 +451,19 @@ class ServidorSistema(BaseHTTPRequestHandler):
         <h1>🐊 PANEL WEB: """ + nombre_activo.upper() + """</h1>
         <p>Estado: <strong style="color: """ + color_estado + """;">""" + estado_texto + """</strong></p>
 
+        <!-- Elemento de audio HTML oculto para que hable el celular -->
         <audio id="reproductorAudio" autoplay></audio>
 
         <div style="margin: 10px 0;">
             <a href="/revivir" class="btn-ai">🟢 Revivir / Activar</a>
             <a href="/matar" class="btn-dead">💀 Matar</a>
+        </div>
+
+        <div style="margin-bottom: 12px; background: #0f172a; padding: 8px; border-radius: 8px;">
+            <h3>🎛️ Filtro / Tono de Voz:</h3>
+            <a href="/efecto/normal" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="normal" else "") + """">Normal</a>
+            <a href="/efecto/grave" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="grave" else "") + """">🎙️ Voz Grave</a>
+            <a href="/efecto/chibi" class="btn-fx """ + ("btn-activo" if EFECTO_VOZ_ACTUAL=="chibi" else "") + """">✨ Voz Aguda / Chibi</a>
         </div>
 
         <div>
@@ -493,5 +507,8 @@ def iniciar_servidor():
 if __name__ == "__main__":
     actualizar_genero_segun_voz()
     threading.Thread(target=iniciar_servidor, daemon=True).start()
-    while Time.sleep(1):
-        pass
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            sys.exit(0)
