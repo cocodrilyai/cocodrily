@@ -13,7 +13,7 @@ from gtts import gTTS
 import requests
 
 # --- CONFIGURACIÓN DE CLAVES ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LZ98ckWn8YiZeBcJkKpOeCX-YTsQbjXXfnKdDUpkRpEg")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6JlP0PynL48B399Q4STeBAnfP9AQzwqg5eLVdP0Yw2aWg")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_a875d0a08d684229b591825019dd115bd2f8e21c1060de52")
 PUERTO_SERVIDOR = int(os.environ.get("PORT", 5000))
 
