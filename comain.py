@@ -380,6 +380,6 @@ if __name__ == "__main__":
     threading.Thread(target=iniciar_servidor, daemon=True).start()
     while True:
         try:
-            time.sleep(1)
+            time.sleep(1) # <-- Corregido en minúscula
         except KeyboardInterrupt:
             sys.exit(0)
